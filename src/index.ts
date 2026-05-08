@@ -40,9 +40,15 @@ export default {
 const userId = (u: Update) => u.message?.from.id ?? u.callback_query?.from.id ?? 0;
 
 const handle = async (u: Update, env: Env) => {
-  await sweepAndDelete(env);
-  if (u.message) await onMessage(u.message, env);
-  else if (u.callback_query) await onCallback(u.callback_query, env);
+  try {
+    await sweepAndDelete(env);
+    if (u.message) await onMessage(u.message, env);
+    else if (u.callback_query) await onCallback(u.callback_query, env);
+  } catch (e) {
+    console.error(e);
+    const chatId = u.message?.chat.id ?? u.callback_query?.message.chat.id;
+    if (chatId) await tg.sendMessage(env.TG_TOKEN, chatId, "Something broke. Try again.");
+  }
 };
 
 const sweepAndDelete = async (env: Env) => {
@@ -59,7 +65,7 @@ const onMessage = async (m: Message, env: Env) => {
 
 const onReceipt = async (m: Message, env: Env) => {
   const fileId = m.photo?.at(-1)?.file_id ?? m.document?.file_id;
-  const imageUrl = fileId ? await tg.fileUrl(env.TG_TOKEN, fileId) : null;
+  const imageUrl = fileId ? await tg.fileDataUrl(env.TG_TOKEN, fileId) : null;
   const text = m.text ?? m.caption ?? "";
   if (!imageUrl && !text) return;
   const today = new Date().toISOString().slice(0, 10);
