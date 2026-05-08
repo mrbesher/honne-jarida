@@ -131,7 +131,7 @@ const command = async (m: Message, env: Env) => {
       const amount = Math.round(parseFloat(args[0]) * 100);
       const category = args[1]?.replace(/_/g, " ") ?? "";
       const note = args.slice(2).join(" ");
-      if (!isCategory(category)) return reply(`Bad category. One of: ${Object.keys(TAXONOMY).join(", ")}`);
+      if (!isCategory(category)) return reply(`Bad category. Use one of:\n${categoryList()}`);
       const today = new Date().toISOString().slice(0, 10);
       const ins = await db.insert(env.DB, "expense", { date: today, amount_cents: amount, category, subcategory: null, source: null, note });
       return reply(`+${money(amount)} ${category} (#${ins!.id})`);
@@ -151,9 +151,23 @@ const command = async (m: Message, env: Env) => {
       return reply(`Undone #${results[0].id}.`);
     }
     default:
-      return reply("/cash  /last [n]  /edit <id> <field> <value>  /add <amount> <Category> [note]  /income <amount> <source> [note]  /undo");
+      return reply(HELP);
   }
 };
+
+const HELP = [
+  "/cash  balance and runway",
+  "/last [n]  recent entries (default 10)",
+  "/edit <id> <field> <value>  update a field",
+  "/add <amount> <Category> [note]  manual expense",
+  "/income <amount> <source> [note]  log income",
+  "/undo  delete last entry",
+  "",
+  "Or just send a receipt photo, screenshot, or text.",
+].join("\n");
+
+const categoryList = () =>
+  Object.keys(TAXONOMY).map(c => "  " + c.replace(/ /g, "_")).join("\n");
 
 const promptKeyboard = (id: number) => ({
   inline_keyboard: [[
