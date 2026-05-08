@@ -50,7 +50,7 @@ export const extract = async (
       response_format: { type: "json_object" },
     }),
   });
-  if (!res.ok) throw new Error(`hf ${res.status}`);
+  if (!res.ok) throw new Error(`hf ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const { choices } = await res.json() as { choices: { message: { content: string } }[] };
   return validate(JSON.parse(choices[0].message.content), today);
 };
