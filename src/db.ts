@@ -43,6 +43,23 @@ export const burn = async (db: D1Database, days: number) =>
     "SELECT COALESCE(SUM(amount_cents), 0) AS cents FROM transactions WHERE type='expense' AND date >= date('now', ?)"
   ).bind(`-${days} days`).first<{ cents: number }>())?.cents ?? 0;
 
+export const expectedMonthlyBurn = async (db: D1Database, months = 12): Promise<number> => {
+  const { results } = await db.prepare(
+    `SELECT strftime('%Y-%m', date) AS ym, SUM(amount_cents) AS cents
+     FROM transactions WHERE type='expense' AND date >= date('now', ?)
+     GROUP BY ym`
+  ).bind(`-${months - 1} months`).all<{ ym: string; cents: number }>();
+  const got = new Map(results.map(r => [r.ym, r.cents]));
+  const today = new Date();
+  let weighted = 0;
+  for (let i = 0; i < months; i++) {
+    const d = new Date(today.getFullYear(), today.getMonth() - (months - 1 - i), 1);
+    const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    weighted += (got.get(ym) ?? 0) * (i + 1);
+  }
+  return weighted / (months * (months + 1) / 2);
+};
+
 export const trackPrompt = (db: D1Database, chat_id: number, message_id: number, txn_id: number) =>
   db.prepare("INSERT INTO pending_edits VALUES (?, ?, ?, datetime('now', '+10 minutes'))")
     .bind(chat_id, message_id, txn_id).run();

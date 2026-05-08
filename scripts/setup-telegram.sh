@@ -12,7 +12,8 @@ echo
 curl -sS "https://api.telegram.org/bot$TG_TOKEN/setMyCommands" \
   -H 'Content-Type: application/json' \
   -d '{"commands":[
-    {"command":"cash","description":"balance and runway"},
+    {"command":"cash","description":"balance, burn, runway"},
+    {"command":"sum","description":"monthly breakdown"},
     {"command":"last","description":"recent entries"},
     {"command":"edit","description":"update an entry"},
     {"command":"add","description":"manual expense"},

@@ -111,13 +111,41 @@ const command = async (m: Message, env: Env) => {
   switch (cmd) {
     case "/cash": {
       const c = await db.cash(env.DB);
-      const b = await db.burn(env.DB, 30);
+      const b = await db.expectedMonthlyBurn(env.DB);
       const months = b > 0 ? c / b : Infinity;
-      return reply(`Balance ${money(c)}\n30-day burn ${money(b)}\nRunway ${months === Infinity ? "infinite" : months.toFixed(1) + " months"}`);
+      const ym = new Date().toISOString().slice(0, 7);
+      const sum = await db.monthSummary(env.DB, ym);
+      return reply([
+        `Balance: ${money(c)}`,
+        `Burn: ${money(b)}/mo (12mo weighted)`,
+        `Runway: ${months === Infinity ? "infinite" : months.toFixed(1) + " months"}`,
+        "",
+        `${ym} so far:`,
+        ...sum.results.slice(0, 10).map(r => `  ${r.category}: ${money(r.cents)} (${r.n})`),
+      ].join("\n"));
+    }
+    case "/sum": {
+      const ym = args[0] ?? new Date().toISOString().slice(0, 7);
+      const sum = await db.monthSummary(env.DB, ym);
+      if (!sum.results.length) return reply(`${ym}: no entries.`);
+      const total = sum.results.reduce((s, r) => s + r.cents, 0);
+      const n = sum.results.reduce((s, r) => s + r.n, 0);
+      return reply([
+        `${ym}`,
+        `Total: ${money(total)} over ${n} entries`,
+        "",
+        ...sum.results.map(r => `${r.category}: ${money(r.cents)} (${r.n})`),
+      ].join("\n"));
     }
     case "/last": {
       const { results } = await db.recent(env.DB, parseInt(args[0] || "10"));
-      return reply(results.map(r => `#${r.id} ${money(r.amount_cents)} ${r.date} ${r.category ?? "?"}`).join("\n") || "No entries.");
+      if (!results.length) return reply("No entries.");
+      const blocks = results.map(r => {
+        const sub = r.subcategory ? ` / ${r.subcategory}` : "";
+        const note = r.note ? ` - ${r.note}` : "";
+        return `#${r.id}  ${r.date}  ${money(r.amount_cents)}\n  ${r.category ?? "?"}${sub}${note}`;
+      });
+      return reply(blocks.join("\n\n"));
     }
     case "/edit": {
       const [idStr, field, ...rest] = args;
@@ -156,7 +184,8 @@ const command = async (m: Message, env: Env) => {
 };
 
 const HELP = [
-  "/cash  balance and runway",
+  "/cash  balance, burn, runway, this month",
+  "/sum [yyyy-mm]  monthly breakdown",
   "/last [n]  recent entries (default 10)",
   "/edit <id> <field> <value>  update a field",
   "/add <amount> <Category> [note]  manual expense",
