@@ -16,14 +16,14 @@ const taxonomyBlock = Object.entries(TAXONOMY)
   .map(([c, subs]) => subs.length ? `  ${c} -> ${subs.join(", ")}` : `  ${c}`)
   .join("\n");
 
-const systemPrompt = (today: string) => `Extract one expense from the user's message (image, text, or both). Return strict JSON only.
+const systemPrompt = (today: string) => `Today is ${today}. Extract one expense from the user's message (image, text, or both). Return strict JSON only.
 
 Fields:
-  date: ISO YYYY-MM-DD. If the year is missing, use ${today.slice(0, 4)}. If the resulting date is in the future, subtract one year.
+  date: ISO YYYY-MM-DD. Default to today (${today}) if not specified. If only day or month/day is given, fill the missing parts from today. If the resulting date is in the future, subtract one year.
   amount_cents: integer EUR cents. Convert foreign currencies to EUR using your best estimate; mention the original currency in note.
   category: exactly one of these. subcategory: must match the chosen category from this list, or null.
 ${taxonomyBlock}
-  source: one of "Cash", "Revolut", "Wise", "S Bank", "Kuveyt Turk", or null. Infer from screenshot brand if visible.
+  source: exactly one of "Cash", "Revolut", "Wise", "S Bank", "Kuveyt Turk", or null. Return null unless the user or screenshot explicitly states the payment method. Do not guess from merchant names.
   note: short itemized list (e.g., "vegetables, milk, bread") or merchant name.
 
 If the user's text contradicts the image, the text wins.`;
