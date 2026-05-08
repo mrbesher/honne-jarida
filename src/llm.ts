@@ -16,12 +16,14 @@ const taxonomyBlock = Object.entries(TAXONOMY)
   .map(([c, subs]) => subs.length ? `  ${c} -> ${subs.join(", ")}` : `  ${c}`)
   .join("\n");
 
-const systemPrompt = (today: string) => `Today is ${today}. Extract one expense from the user's message (image, text, or both). Return strict JSON only.
+const systemPrompt = (today: string) => `Today is ${today}. Extract expenses from the user's message (image, text, or both). Return strict JSON: {"expenses": [<expense>, ...]}.
 
-Fields:
-  date: ISO YYYY-MM-DD. Default to today (${today}) if not specified. If only day or month/day is given, fill the missing parts from today. If the resulting date is in the future, subtract one year.
+A single receipt with multiple items is ONE expense (list items in note). A screenshot listing several transactions is one expense PER transaction.
+
+Each expense:
+  date: ISO YYYY-MM-DD. If neither image nor text shows a date, use today (${today}). If only day or month/day is given, fill missing parts from today. If the resulting date is in the future, subtract one year.
   amount_cents: integer EUR cents. Convert foreign currencies to EUR using your best estimate; mention the original currency in note.
-  category: exactly one of these. subcategory: must match the chosen category from this list, or null.
+  category: exactly one of these. subcategory: must match the chosen category, or null.
 ${taxonomyBlock}
   source: exactly one of "Cash", "Revolut", "Wise", "S Bank", "Kuveyt Turk", or null. Return null unless the user or screenshot explicitly states the payment method. Do not guess from merchant names.
   note: short itemized list (e.g., "vegetables, milk, bread") or merchant name.
@@ -33,10 +35,10 @@ export const extract = async (
   imageUrl: string | null,
   text: string,
   today: string,
-): Promise<Extracted | null> => {
+): Promise<Extracted[]> => {
   const userContent: object[] = [];
   if (imageUrl) userContent.push({ type: "image_url", image_url: { url: imageUrl } });
-  userContent.push({ type: "text", text: text || "Extract this expense." });
+  userContent.push({ type: "text", text: text || "Extract these expenses." });
 
   const res = await fetch(ROUTER, {
     method: "POST",
@@ -52,7 +54,8 @@ export const extract = async (
   });
   if (!res.ok) throw new Error(`hf ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const { choices } = await res.json() as { choices: { message: { content: string } }[] };
-  return validate(JSON.parse(choices[0].message.content), today);
+  const parsed = JSON.parse(choices[0].message.content) as { expenses?: unknown[] };
+  return (parsed.expenses ?? []).map(r => validate(r, today)).filter((x): x is Extracted => x !== null);
 };
 
 const validate = (raw: unknown, today: string): Extracted | null => {

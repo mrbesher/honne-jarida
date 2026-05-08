@@ -70,14 +70,16 @@ const onReceipt = async (m: Message, env: Env) => {
   if (!imageUrl && !text) return;
   const today = new Date().toISOString().slice(0, 10);
   const parsed = await extract(env.HF_TOKEN, imageUrl, text, today);
-  if (!parsed) {
+  if (!parsed.length) {
     await tg.sendMessage(env.TG_TOKEN, m.chat.id, "Couldn't read that. Try again or use /add.");
     return;
   }
-  const ins = await db.insert(env.DB, "expense", parsed);
-  const id = ins!.id;
-  const reply = await tg.sendMessage(env.TG_TOKEN, m.chat.id, formatTxn(id, parsed), promptKeyboard(id));
-  await db.trackPrompt(env.DB, m.chat.id, reply.message_id, id);
+  for (const p of parsed) {
+    const ins = await db.insert(env.DB, "expense", p);
+    const id = ins!.id;
+    const reply = await tg.sendMessage(env.TG_TOKEN, m.chat.id, formatTxn(id, p), promptKeyboard(id));
+    await db.trackPrompt(env.DB, m.chat.id, reply.message_id, id);
+  }
 };
 
 const onCallback = async (c: CallbackQuery, env: Env) => {
