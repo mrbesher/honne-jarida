@@ -14,8 +14,6 @@ def q(v):
 def emit(date, t, cents, cat, sub, src, note):
     print(f"INSERT INTO transactions (date, type, amount_cents, category, subcategory, source, note) VALUES ({q(date)}, '{t}', {cents}, {q(cat)}, {q(sub)}, {q(src)}, {q(note)});")
 
-print("BEGIN;")
-
 for sheet in wb.sheetnames:
     if sheet in ("Summary", "Income"):
         continue
@@ -35,5 +33,3 @@ for row in wb["Income"].iter_rows(min_row=2, values_only=True):
     iso = date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)
     cents = round(float(amount) * 100)
     emit(iso, "income", cents, None, None, None, source)
-
-print("COMMIT;")
