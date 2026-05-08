@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/wrangler.json",
+  "name": "honne-jarida",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-05-08",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "honne-jarida",
+      "database_id": "REPLACE_AFTER_CREATE"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BACKUP",
+      "bucket_name": "honne-jarida-backup"
+    }
+  ],
+  "triggers": {
+    "crons": ["0 9 * * 1"]
+  },
+  "vars": {
+    "TG_USER_ID": "REPLACE_WITH_YOUR_TELEGRAM_ID"
+  }
+}
