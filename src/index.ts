@@ -117,7 +117,7 @@ const command = async (m: Message, env: Env) => {
       const sum = await db.monthSummary(env.DB, ym);
       return reply([
         `Balance: ${money(c)}`,
-        `Burn: ${money(b)}/mo (12mo weighted)`,
+        `Burn: ${money(b)}/mo`,
         `Runway: ${months === Infinity ? "infinite" : months.toFixed(1) + " months"}`,
         "",
         `${ym} so far:`,
