@@ -14,6 +14,7 @@ curl -sS "https://api.telegram.org/bot$TG_TOKEN/setMyCommands" \
   -d '{"commands":[
     {"command":"cash","description":"balance, burn, runway"},
     {"command":"sum","description":"monthly breakdown"},
+    {"command":"pie","description":"pie chart of spending"},
     {"command":"last","description":"recent entries"},
     {"command":"edit","description":"update an entry"},
     {"command":"add","description":"manual expense"},

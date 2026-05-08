@@ -25,6 +25,9 @@ export const deleteMessage = (token: string, chat_id: number, message_id: number
 export const answerCallbackQuery = (token: string, callback_query_id: string, text?: string) =>
   call<unknown>(token, "answerCallbackQuery", { callback_query_id, text });
 
+export const sendPhoto = (token: string, chat_id: number, photo: string, caption?: string) =>
+  call<Message>(token, "sendPhoto", { chat_id, photo, caption });
+
 export const fileUrl = async (token: string, file_id: string) => {
   const file = await call<{ file_path: string }>(token, "getFile", { file_id });
   return `${API}/file/bot${token}/${file.file_path}`;

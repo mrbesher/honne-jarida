@@ -137,6 +137,22 @@ const command = async (m: Message, env: Env) => {
         ...sum.results.map(r => `${r.category}: ${money(r.cents)} (${r.n})`),
       ].join("\n"));
     }
+    case "/pie": {
+      const ym = args[0] ?? new Date().toISOString().slice(0, 7);
+      const sum = await db.monthSummary(env.DB, ym);
+      if (!sum.results.length) return reply(`${ym}: no entries.`);
+      const config = {
+        type: "pie",
+        data: {
+          labels: sum.results.map(r => r.category),
+          datasets: [{ data: sum.results.map(r => +(r.cents / 100).toFixed(2)) }],
+        },
+        options: { plugins: { title: { display: true, text: `${ym} spending` } } },
+      };
+      const url = `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(config))}`;
+      await tg.sendPhoto(env.TG_TOKEN, m.chat.id, url, `${ym} breakdown`);
+      return;
+    }
     case "/last": {
       const { results } = await db.recent(env.DB, parseInt(args[0] || "10"));
       if (!results.length) return reply("No entries.");
@@ -186,6 +202,7 @@ const command = async (m: Message, env: Env) => {
 const HELP = [
   "/cash  balance, burn, runway, this month",
   "/sum [yyyy-mm]  monthly breakdown",
+  "/pie [yyyy-mm]  pie chart of spending",
   "/last [n]  recent entries (default 10)",
   "/edit <id> <field> <value>  update a field",
   "/add <amount> <Category> [note]  manual expense",
