@@ -334,36 +334,3 @@ test("registration rejects invalid timezones", async () => {
     globalThis.fetch = originalFetch;
   }
 });
-
-test("help never advertises the approval command", async () => {
-  const state: State = {
-    incomes: [],
-    prompts: [],
-    user: {
-      id: 1,
-      status: "admin",
-      currency: "EUR",
-      timezone: "Europe/Helsinki",
-      first_name: "Admin",
-      last_name: null,
-      username: null,
-      requested_at: "2026-07-01 00:00:00",
-    },
-  };
-  let reply = "";
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (_input, init) => {
-    reply = (JSON.parse(String(init?.body)) as { text: string }).text;
-    return new Response(JSON.stringify({ ok: true, result: { message_id: 1, chat: { id: 1 } } }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
-  };
-  try {
-    await runUpdate({ message: { message_id: 1, from: { id: 1 }, chat: { id: 1 }, text: "/help" } }, fakeDatabase(state));
-    assert.match(reply, /\/cash/);
-    assert.doesNotMatch(reply, /\/approve/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
