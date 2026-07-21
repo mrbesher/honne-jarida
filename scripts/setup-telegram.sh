@@ -12,13 +12,14 @@ echo
 curl -sS "https://api.telegram.org/bot$TG_TOKEN/setMyCommands" \
   -H 'Content-Type: application/json' \
   -d '{"commands":[
-    {"command":"cash","description":"balance, burn, runway"},
-    {"command":"sum","description":"monthly breakdown"},
-    {"command":"pie","description":"pie chart of spending"},
+    {"command":"cash","description":"balance and monthly overview"},
+    {"command":"chart","description":"cash and spending trends"},
     {"command":"last","description":"recent entries"},
     {"command":"edit","description":"update an entry"},
     {"command":"add","description":"manual expense"},
     {"command":"income","description":"log income"},
+    {"command":"ask","description":"search and analyze finances"},
+    {"command":"timezone","description":"set local timezone"},
     {"command":"undo","description":"delete last entry"},
     {"command":"help","description":"show usage"}
   ]}'

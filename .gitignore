@@ -6,3 +6,5 @@ seed.sql
 *.csv
 *.xlsx
 *.pdf
+PLAN.md
+progress.log
