@@ -280,7 +280,7 @@ const command = async (m: Message, env: Env, user: ZonedUser) => {
     case "/why": return reply(await why(env, user, args[0]));
     case "/ask": return reply(stripMarkdown(await financeAsk(env.DB, env.HF_TOKEN, user, args.join(" "))));
     default:
-      return reply(help(user.status === "admin"));
+      return reply(help());
   }
 };
 
@@ -363,7 +363,7 @@ const formatPending = (u: db.User) => {
   return `${u.id}  ${u.currency}  ${u.timezone ?? "timezone missing"}  ${name}${handle}  ${u.requested_at.slice(0, 10)}`;
 };
 
-const help = (admin: boolean) => [
+const help = () => [
   "/cash [yyyy-mm]  balance and monthly overview",
   "/chart [spending]  cash trajectory or spending mix",
   "/recurring  detected recurring charges",
@@ -376,7 +376,6 @@ const help = (admin: boolean) => [
   "/income <amount> <source> [note]  log income",
   "/timezone <Area/City>  set your local timezone",
   "/undo  delete last entry",
-  ...(admin ? ["/approve [id]  list pending or approve user"] : []),
   "",
   "Or just send a receipt photo, screenshot, or text.",
 ].join("\n");
