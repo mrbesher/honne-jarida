@@ -16,6 +16,24 @@
       "bucket_name": "honne-jarida-backup"
     }
   ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "RECEIPT_QUEUE",
+        "queue": "honne-jarida-receipts"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "honne-jarida-receipts",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "dead_letter_queue": "honne-jarida-receipts-dlq",
+        "max_concurrency": 1
+      }
+    ]
+  },
   "triggers": {
     "crons": ["0 9 * * 1"]
   }

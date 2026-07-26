@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { duplicateExpense, duplicateIncome, type Expense, type Income } from "../src/db.ts";
+import {
+  duplicateExpense,
+  duplicateIncome,
+  insertReceiptExpense,
+  receiptExpense,
+  type Expense,
+  type Income,
+} from "../src/db.ts";
 
 type Input = Omit<Expense, "id" | "user_id" | "created_at">;
 
@@ -104,4 +111,41 @@ test("finds only exact same-user income duplicates", async () => {
   const added = insert(1, income);
   assert.equal((await duplicateIncome(db, 1, added, income))?.id, original);
   assert.equal(await duplicateIncome(db, 1, added, { ...income, source: "S Market Bonus" }), null);
+});
+
+test("receipt expenses are idempotent by update and item", async () => {
+  const sqlite = new DatabaseSync(":memory:");
+  sqlite.exec(`CREATE TABLE expenses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    amount_cents INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    subcategory TEXT NOT NULL,
+    source TEXT,
+    note TEXT,
+    telegram_update_id INTEGER,
+    telegram_item_index INTEGER,
+    telegram_reply_message_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE UNIQUE INDEX expenses_telegram_item
+  ON expenses(telegram_update_id, telegram_item_index)
+  WHERE telegram_update_id IS NOT NULL;`);
+  const db = {
+    prepare: (sql: string) => ({
+      bind: (...params: unknown[]) => ({
+        first: () => sqlite.prepare(sql).get(...params) ?? null,
+      }),
+    }),
+  } as unknown as D1Database;
+
+  const inserted = await insertReceiptExpense(db, 1, 99, 0, expense);
+  const duplicate = await insertReceiptExpense(db, 1, 99, 0, expense);
+  const stored = await receiptExpense(db, 99, 0);
+
+  assert.equal(inserted?.id, 1);
+  assert.equal(duplicate, null);
+  assert.equal(stored?.id, 1);
+  assert.equal(stored?.telegram_reply_message_id, null);
 });

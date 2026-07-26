@@ -334,3 +334,81 @@ test("registration rejects invalid timezones", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("image updates are queued before the webhook responds", async () => {
+  const update = {
+    update_id: 42,
+    message: {
+      message_id: 1,
+      from: { id: 1 },
+      chat: { id: 1 },
+      photo: [{ file_id: "photo" }],
+    },
+  };
+  const queued: object[] = [];
+  let waited = false;
+  const env = {
+    DB: {},
+    BACKUP: {},
+    RECEIPT_QUEUE: { send: async (body: object) => queued.push(body) },
+    TG_TOKEN: "telegram-token",
+    TG_SECRET: "secret",
+    HF_TOKEN: "hf-token",
+  };
+  const response = await worker.fetch(new Request("https://worker.test", {
+    method: "POST",
+    headers: { "X-Telegram-Bot-Api-Secret-Token": "secret" },
+    body: JSON.stringify(update),
+  }), env as never, { waitUntil: () => { waited = true; } } as never);
+  const documentUpdate = {
+    update_id: 43,
+    message: {
+      message_id: 2,
+      from: { id: 1 },
+      chat: { id: 1 },
+      document: { file_id: "document" },
+    },
+  };
+  const documentResponse = await worker.fetch(new Request("https://worker.test", {
+    method: "POST",
+    headers: { "X-Telegram-Bot-Api-Secret-Token": "secret" },
+    body: JSON.stringify(documentUpdate),
+  }), env as never, { waitUntil: () => { waited = true; } } as never);
+
+  assert.equal(response.status, 200);
+  assert.equal(documentResponse.status, 200);
+  assert.deepEqual(queued, [update, documentUpdate]);
+  assert.equal(waited, false);
+});
+
+test("a failed image enqueue asks Telegram to retry", async () => {
+  const originalError = console.error;
+  console.error = () => undefined;
+  const env = {
+    DB: {},
+    BACKUP: {},
+    RECEIPT_QUEUE: { send: async () => { throw new Error("queue unavailable"); } },
+    TG_TOKEN: "telegram-token",
+    TG_SECRET: "secret",
+    HF_TOKEN: "hf-token",
+  };
+  try {
+    const response = await worker.fetch(new Request("https://worker.test", {
+      method: "POST",
+      headers: { "X-Telegram-Bot-Api-Secret-Token": "secret" },
+      body: JSON.stringify({
+        update_id: 43,
+        message: {
+          message_id: 1,
+          from: { id: 1 },
+          chat: { id: 1 },
+          document: { file_id: "image", mime_type: "image/png" },
+        },
+      }),
+    }), env as never, { waitUntil: () => undefined } as never);
+
+    assert.equal(response.status, 503);
+  } finally {
+    console.error = originalError;
+  }
+});

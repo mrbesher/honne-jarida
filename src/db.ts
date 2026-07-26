@@ -35,6 +35,18 @@ export type Income = {
   created_at: string;
 };
 
+export type ReceiptJob = {
+  update_id: number;
+  extracted_json: string;
+  completed_at: string | null;
+  created_at: string;
+};
+
+export type ReceiptRecord = {
+  id: number;
+  telegram_reply_message_id: number | null;
+};
+
 const EDITABLE = new Set(["date", "amount_cents", "category", "subcategory", "source", "note"]);
 
 export const getUser = (db: D1Database, id: number) =>
@@ -95,6 +107,86 @@ export const duplicateIncome = (
    WHERE user_id=? AND date=? AND amount_cents=? AND source IS ? AND note IS ? AND id<>?
    ORDER BY id DESC LIMIT 1`
 ).bind(userId, i.date, i.amount_cents, i.source, i.note, id).first<{ id: number }>();
+
+export const receiptJob = (db: D1Database, updateId: number) =>
+  db.prepare("SELECT * FROM receipt_jobs WHERE update_id=?").bind(updateId).first<ReceiptJob>();
+
+export const saveReceiptExtraction = (db: D1Database, updateId: number, extractedJson: string) =>
+  db.prepare(
+    "INSERT INTO receipt_jobs (update_id, extracted_json) VALUES (?, ?) ON CONFLICT(update_id) DO NOTHING"
+  ).bind(updateId, extractedJson).run();
+
+export const completeReceiptJob = (db: D1Database, updateId: number) =>
+  db.prepare("UPDATE receipt_jobs SET completed_at=datetime('now') WHERE update_id=?")
+    .bind(updateId).run();
+
+export const insertReceiptExpense = (
+  db: D1Database,
+  userId: number,
+  updateId: number,
+  itemIndex: number,
+  e: Omit<Expense, "id" | "user_id" | "created_at">,
+) =>
+  db.prepare(
+    `INSERT OR IGNORE INTO expenses
+      (user_id, date, amount_cents, category, subcategory, source, note, telegram_update_id, telegram_item_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     RETURNING id, telegram_reply_message_id`
+  ).bind(userId, e.date, e.amount_cents, e.category, e.subcategory, e.source, e.note, updateId, itemIndex)
+    .first<ReceiptRecord>();
+
+export const receiptExpense = (db: D1Database, updateId: number, itemIndex: number) =>
+  db.prepare(
+    "SELECT id, telegram_reply_message_id FROM expenses WHERE telegram_update_id=? AND telegram_item_index=?"
+  ).bind(updateId, itemIndex).first<ReceiptRecord>();
+
+export const insertReceiptIncome = (
+  db: D1Database,
+  userId: number,
+  updateId: number,
+  itemIndex: number,
+  i: Omit<Income, "id" | "user_id" | "created_at">,
+) =>
+  db.prepare(
+    `INSERT OR IGNORE INTO incomes
+      (user_id, date, amount_cents, source, note, telegram_update_id, telegram_item_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     RETURNING id, telegram_reply_message_id`
+  ).bind(userId, i.date, i.amount_cents, i.source, i.note, updateId, itemIndex)
+    .first<ReceiptRecord>();
+
+export const receiptIncome = (db: D1Database, updateId: number, itemIndex: number) =>
+  db.prepare(
+    "SELECT id, telegram_reply_message_id FROM incomes WHERE telegram_update_id=? AND telegram_item_index=?"
+  ).bind(updateId, itemIndex).first<ReceiptRecord>();
+
+export const trackReceiptExpenseReply = (
+  db: D1Database,
+  id: number,
+  chatId: number,
+  messageId: number,
+) => db.batch([
+  db.prepare(
+    "UPDATE expenses SET telegram_reply_message_id=? WHERE id=? AND telegram_reply_message_id IS NULL"
+  ).bind(messageId, id),
+  db.prepare(
+    "INSERT OR IGNORE INTO pending_prompts VALUES (?, ?, datetime('now', '+10 minutes'))"
+  ).bind(chatId, messageId),
+]);
+
+export const trackReceiptIncomeReply = (
+  db: D1Database,
+  id: number,
+  chatId: number,
+  messageId: number,
+) => db.batch([
+  db.prepare(
+    "UPDATE incomes SET telegram_reply_message_id=? WHERE id=? AND telegram_reply_message_id IS NULL"
+  ).bind(messageId, id),
+  db.prepare(
+    "INSERT OR IGNORE INTO pending_prompts VALUES (?, ?, datetime('now', '+10 minutes'))"
+  ).bind(chatId, messageId),
+]);
 
 export const update = (db: D1Database, userId: number, id: number, field: string, value: string | number | null) => {
   if (!EDITABLE.has(field)) throw new Error(`field not editable: ${field}`);

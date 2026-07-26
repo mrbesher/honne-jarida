@@ -9,6 +9,7 @@ import { canonicalTimeZone, isIsoDate, localDate } from "./time.ts";
 interface Env {
   DB: D1Database;
   BACKUP: R2Bucket;
+  RECEIPT_QUEUE: Queue<Update>;
   TG_TOKEN: string;
   TG_SECRET: string;
   HF_TOKEN: string;
@@ -17,19 +18,34 @@ interface Env {
 type From = { id: number; first_name?: string; last_name?: string; username?: string };
 type Message = { message_id: number; from: From; chat: { id: number }; text?: string; caption?: string; photo?: { file_id: string }[]; document?: { file_id: string; mime_type?: string } };
 type CallbackQuery = { id: string; from: From; message: Message; data: string };
-type Update = { message?: Message; callback_query?: CallbackQuery };
+type Update = { update_id: number; message?: Message; callback_query?: CallbackQuery };
 type ZonedUser = db.User & { timezone: string };
 
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.TG_SECRET) return new Response("ok");
+    let update: Update;
     try {
-      if (req.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.TG_SECRET) return new Response("ok");
-      const update = await req.json() as Update;
-      ctx.waitUntil(handle(update, env).catch(console.error));
+      update = await req.json() as Update;
     } catch (e) {
       console.error(e);
+      return new Response("ok");
+    }
+    if (isImageReceipt(update)) {
+      try {
+        await env.RECEIPT_QUEUE.send(update);
+      } catch (e) {
+        console.error(e);
+        return new Response("retry", { status: 503 });
+      }
+    } else {
+      ctx.waitUntil(handle(update, env).catch(console.error));
     }
     return new Response("ok");
+  },
+
+  async queue(batch: MessageBatch<Update>, env: Env): Promise<void> {
+    for (const message of batch.messages) await processUpdate(message.body, env, message.body.update_id);
   },
 
   async scheduled(_event: ScheduledEvent, env: Env, _ctx: ExecutionContext): Promise<void> {
@@ -39,16 +55,25 @@ export default {
   },
 };
 
+const isImageReceipt = (u: Update) =>
+  !!u.message?.photo?.length ||
+  (!!u.message?.document &&
+    (!u.message.document.mime_type || u.message.document.mime_type.startsWith("image/")));
+
 const handle = async (u: Update, env: Env) => {
   try {
-    await sweepAll(env);
-    if (u.message) await onMessage(u.message, env);
-    else if (u.callback_query) await onCallback(u.callback_query, env);
+    await processUpdate(u, env);
   } catch (e) {
     console.error(e);
     const chatId = u.message?.chat.id ?? u.callback_query?.message.chat.id;
     if (chatId) await tg.sendMessage(env.TG_TOKEN, chatId, "Something broke. Try again.");
   }
+};
+
+const processUpdate = async (u: Update, env: Env, receiptUpdateId?: number) => {
+  await sweepAll(env);
+  if (u.message) await onMessage(u.message, env, receiptUpdateId);
+  else if (u.callback_query) await onCallback(u.callback_query, env);
 };
 
 const sweepAll = async (env: Env) => {
@@ -59,7 +84,7 @@ const sweepAll = async (env: Env) => {
   await db.sweepPendingUsers(env.DB);
 };
 
-const onMessage = async (m: Message, env: Env) => {
+const onMessage = async (m: Message, env: Env, receiptUpdateId?: number) => {
   const cmd = m.text?.trim().split(/\s+/)[0];
   if (cmd === "/register") return register(m, env);
   const user = await db.getUser(env.DB, m.from.id);
@@ -71,7 +96,7 @@ const onMessage = async (m: Message, env: Env) => {
   }
   const zonedUser = { ...user, timezone: user.timezone };
   if (m.text?.startsWith("/")) return command(m, env, zonedUser);
-  return onReceipt(m, env, zonedUser);
+  return onReceipt(m, env, zonedUser, receiptUpdateId);
 };
 
 const onCallback = async (c: CallbackQuery, env: Env) => {
@@ -160,22 +185,36 @@ const setTimezone = async (m: Message, env: Env, user: db.User) => {
   return tg.sendMessage(env.TG_TOKEN, m.chat.id, `Timezone set to ${timezone}.`);
 };
 
-const onReceipt = async (m: Message, env: Env, user: ZonedUser) => {
+const onReceipt = async (m: Message, env: Env, user: ZonedUser, updateId?: number) => {
   if (m.document?.mime_type && !m.document.mime_type.startsWith("image/")) {
     await tg.sendMessage(env.TG_TOKEN, m.chat.id, `Can't read ${m.document.mime_type ?? "that file type"}. Send a photo or screenshot instead.`);
     return;
   }
+  const job = updateId === undefined ? null : await db.receiptJob(env.DB, updateId);
+  if (job?.completed_at) return;
   const fileId = m.photo?.at(-1)?.file_id ?? m.document?.file_id;
-  const imageUrl = fileId ? await tg.fileDataUrl(env.TG_TOKEN, fileId) : null;
   const text = m.text ?? m.caption ?? "";
-  if (!imageUrl && !text) return;
-  const today = localDate(user.timezone);
-  const parsed = await llm.extract(env.HF_TOKEN, imageUrl, text, today, user.currency);
+  let parsed: llm.Extracted[];
+  if (job) {
+    parsed = JSON.parse(job.extracted_json) as llm.Extracted[];
+  } else {
+    const imageUrl = fileId ? await tg.fileDataUrl(env.TG_TOKEN, fileId) : null;
+    if (!imageUrl && !text) return;
+    const today = localDate(user.timezone);
+    parsed = await llm.extract(env.HF_TOKEN, imageUrl, text, today, user.currency);
+    if (updateId !== undefined) await db.saveReceiptExtraction(env.DB, updateId, JSON.stringify(parsed));
+  }
   if (!parsed.length) {
     await tg.sendMessage(env.TG_TOKEN, m.chat.id, "Couldn't read that. Try again or use /add.");
+    if (updateId !== undefined) await db.completeReceiptJob(env.DB, updateId);
     return;
   }
-  await saveExtracted(m.chat.id, env, user, parsed);
+  if (updateId === undefined) {
+    await saveExtracted(m.chat.id, env, user, parsed);
+    return;
+  }
+  await saveQueuedReceipt(m.chat.id, env, user, updateId, parsed);
+  await db.completeReceiptJob(env.DB, updateId);
 };
 
 const saveExtracted = async (chatId: number, env: Env, user: db.User, parsed: llm.Extracted[]) => {
@@ -195,6 +234,36 @@ const saveExtracted = async (chatId: number, env: Env, user: db.User, parsed: ll
     const warning = duplicate ? `Possible duplicate of income #${duplicate.id}. Both are saved.\n\n` : "";
     const reply = await tg.sendMessage(env.TG_TOKEN, chatId, warning + formatIncome(id, p, user.currency), incomeKeyboard(id, !!duplicate));
     await db.trackPrompt(env.DB, chatId, reply.message_id);
+  }
+};
+
+const saveQueuedReceipt = async (
+  chatId: number,
+  env: Env,
+  user: db.User,
+  updateId: number,
+  parsed: llm.Extracted[],
+) => {
+  for (const [itemIndex, p] of parsed.entries()) {
+    if (p.kind === "expense") {
+      const inserted = await db.insertReceiptExpense(env.DB, user.id, updateId, itemIndex, p);
+      const row = inserted ?? await db.receiptExpense(env.DB, updateId, itemIndex);
+      if (!row) throw new Error(`missing receipt expense ${updateId}:${itemIndex}`);
+      if (row.telegram_reply_message_id !== null) continue;
+      const duplicate = await db.duplicateExpense(env.DB, user.id, row.id, p);
+      const warning = duplicate ? `Possible duplicate of #${duplicate.id}. Both are saved.\n\n` : "";
+      const reply = await tg.sendMessage(env.TG_TOKEN, chatId, warning + formatExpense(row.id, p, user.currency), expenseKeyboard(row.id, !!duplicate));
+      await db.trackReceiptExpenseReply(env.DB, row.id, chatId, reply.message_id);
+      continue;
+    }
+    const inserted = await db.insertReceiptIncome(env.DB, user.id, updateId, itemIndex, p);
+    const row = inserted ?? await db.receiptIncome(env.DB, updateId, itemIndex);
+    if (!row) throw new Error(`missing receipt income ${updateId}:${itemIndex}`);
+    if (row.telegram_reply_message_id !== null) continue;
+    const duplicate = await db.duplicateIncome(env.DB, user.id, row.id, p);
+    const warning = duplicate ? `Possible duplicate of income #${duplicate.id}. Both are saved.\n\n` : "";
+    const reply = await tg.sendMessage(env.TG_TOKEN, chatId, warning + formatIncome(row.id, p, user.currency), incomeKeyboard(row.id, !!duplicate));
+    await db.trackReceiptIncomeReply(env.DB, row.id, chatId, reply.message_id);
   }
 };
 
