@@ -28,12 +28,23 @@ const database = () => {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+  const expand = (sql: string, params: unknown[]) => {
+    const indices: number[] = [];
+    const expanded = sql.replace(/\?(\d+)/g, (_, n) => {
+      indices.push(Number(n) - 1);
+      return "?";
+    });
+    return { sql: expanded, params: indices.length ? indices.map(i => params[i]) : params };
+  };
   const db = {
     prepare: (sql: string) => ({
-      bind: (...params: unknown[]) => ({
-        first: () => sqlite.prepare(sql).get(...params) ?? null,
-        all: () => ({ results: sqlite.prepare(sql).all(...params) }),
-      }),
+      bind: (...params: unknown[]) => {
+        const bound = expand(sql, params);
+        return {
+          first: () => sqlite.prepare(bound.sql).get(...bound.params) ?? null,
+          all: () => ({ results: sqlite.prepare(bound.sql).all(...bound.params) }),
+        };
+      },
     }),
   } as unknown as D1Database;
   const income = (userId: number, date: string, cents: number) =>
@@ -81,13 +92,45 @@ test("cash overview uses exact cutoffs and top five subcategory percentages", as
   assert.match(current, /Essentials \/ Groceries: 400\.00 EUR  40%/);
   assert.doesNotMatch(current, /Other \/ Miscellaneous/);
   assert.doesNotMatch(current, /Travel \/ Accommodation/);
-  assert.match(current, /Projected expenses:/);
+  // max(avg lumpy June rent 500/6, actual lumpy 0); non-lumpy 1000 paced 21→31 days
+  assert.match(current, /Projected expenses: 1559\.52 EUR \(\+1309\.52 EUR vs 3-month average\)/);
 
   const historical = await cashOverview(db, user, "2026-06", now);
   assert.match(historical, /Balance through 2026-06: 1500\.00 EUR/);
   assert.match(historical, /Net: \+1500\.00 EUR/);
   assert.doesNotMatch(historical, /Burn:/);
   assert.doesNotMatch(historical, /Projected expenses:/);
+});
+
+test("cash overview omits projected expenses with fewer than five non-lumpy datapoints", async () => {
+  const { db, income, expense } = database();
+  income(1, "2026-07-01", 300_000);
+  expense(1, "2026-06-01", 50_000, "Essentials", "Rent/Mortgage");
+  expense(1, "2026-07-10", 40_000, "Essentials", "Groceries");
+  expense(1, "2026-07-12", 20_000, "Eating Out", "Restaurant");
+  expense(1, "2026-07-14", 15_000, "Transportation", "Fuel");
+  expense(1, "2026-07-16", 10_000, "Subscriptions", "Software & Apps");
+
+  const current = await cashOverview(db, user, undefined, now);
+  assert.match(current, /Burn:/);
+  assert.match(current, /Runway:/);
+  assert.doesNotMatch(current, /Projected expenses:/);
+});
+
+test("projected expenses uses max of average and actualized lumpy", async () => {
+  const { db, income, expense } = database();
+  income(1, "2026-07-01", 500_000);
+  expense(1, "2026-06-01", 50_000, "Essentials", "Rent/Mortgage");
+  expense(1, "2026-07-05", 80_000, "Essentials", "Rent/Mortgage");
+  expense(1, "2026-07-10", 40_000, "Essentials", "Groceries");
+  expense(1, "2026-07-12", 20_000, "Eating Out", "Restaurant");
+  expense(1, "2026-07-14", 15_000, "Transportation", "Fuel");
+  expense(1, "2026-07-16", 10_000, "Subscriptions", "Software & Apps");
+  expense(1, "2026-07-18", 8_000, "Lifestyle & Leisure", "Entertainment");
+
+  const current = await cashOverview(db, user, undefined, now);
+  // max(500/6, actual rent 800) + non-lumpy 930 paced 21→31 = 800 + 1372.86
+  assert.match(current, /Projected expenses: 2172\.86 EUR/);
 });
 
 test("cash trajectory fills months, negates expenses, and carries opening balance", async () => {

@@ -43,7 +43,10 @@ const percentage = (part: number, total: number) => {
   return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}%`;
 };
 
-const pace = async (database: D1Database, user: ReportUser, today: string, monthExpenseCents: number) => {
+const isLumpy = (row: { subcategory: string; amount_cents: number }, cutoff: number) =>
+  LUMPY_SUBCATEGORIES.has(row.subcategory) || row.amount_cents >= cutoff;
+
+const pace = async (database: D1Database, user: ReportUser, today: string) => {
   const ym = today.slice(0, 7);
   const { results: recent } = await database.prepare(
     "SELECT amount_cents FROM expenses WHERE user_id=? AND date >= ? AND date <= ? ORDER BY amount_cents"
@@ -52,13 +55,23 @@ const pace = async (database: D1Database, user: ReportUser, today: string, month
   const { results: monthRows } = await database.prepare(
     "SELECT subcategory, amount_cents FROM expenses WHERE user_id=? AND date >= ? AND date <= ?"
   ).bind(user.id, `${ym}-01`, today).all<{ subcategory: string; amount_cents: number }>();
-  const lumpy = monthRows
-    .filter(row => LUMPY_SUBCATEGORIES.has(row.subcategory) || row.amount_cents >= cutoff)
+  const nonLumpy = monthRows.filter(row => !isLumpy(row, cutoff));
+  if (nonLumpy.length < 5) return null;
+  const actualLumpy = monthRows
+    .filter(row => isLumpy(row, cutoff))
     .reduce((sum, row) => sum + row.amount_cents, 0);
+
+  const { results: priorRows } = await database.prepare(
+    "SELECT subcategory, amount_cents FROM expenses WHERE user_id=? AND date >= ? AND date < ?"
+  ).bind(user.id, `${shiftMonth(ym, -6)}-01`, `${ym}-01`).all<{ subcategory: string; amount_cents: number }>();
+  const avgLumpy = Math.round(
+    priorRows.filter(row => isLumpy(row, cutoff)).reduce((sum, row) => sum + row.amount_cents, 0) / 6,
+  );
   const day = Number(today.slice(8, 10));
   const [year, month] = ym.split("-").map(Number);
   const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const projected = lumpy + Math.round((monthExpenseCents - lumpy) / day * daysInMonth);
+  const nonLumpyCents = nonLumpy.reduce((sum, row) => sum + row.amount_cents, 0);
+  const projected = Math.max(avgLumpy, actualLumpy) + Math.round(nonLumpyCents / day * daysInMonth);
   const average = await db.expectedMonthlyBurn(database, user.id, 3, ym);
   return { projected, average };
 };
@@ -89,16 +102,20 @@ export const cashOverview = async (database: D1Database, user: ReportUser, reque
   if (current) {
     const [burn, paceData] = await Promise.all([
       db.expectedMonthlyBurn(database, user.id, 12, ym),
-      pace(database, user, today, month.expense_cents),
+      pace(database, user, today),
     ]);
     const runway = burn > 0 ? Math.max(0, balance / burn).toFixed(1) + " months" : "infinite";
-    const delta = paceData.projected - paceData.average;
     lines.push(
       "",
       `Burn: ${money(Math.round(burn), user.currency)}/month`,
       `Runway: ${runway}`,
-      `Projected expenses: ${money(paceData.projected, user.currency)} (${signedMoney(delta, user.currency)} vs 3-month average)`,
     );
+    if (paceData) {
+      const delta = paceData.projected - paceData.average;
+      lines.push(
+        `Projected expenses: ${money(paceData.projected, user.currency)} (${signedMoney(delta, user.currency)} vs 3-month average)`,
+      );
+    }
   }
 
   if (top.results.length) {
